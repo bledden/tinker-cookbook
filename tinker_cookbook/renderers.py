@@ -185,6 +185,14 @@ class RenderContext:
     This allows renderers to access information about the message's position
     in the conversation without changing the render_message signature for
     each new piece of context needed.
+
+    Note: The render_message signature changed in PR #237 from:
+        render_message(idx: int, message: Message, is_last: bool = False)
+    to:
+        render_message(message: Message, ctx: RenderContext)
+
+    Code that calls render_message directly (not through build_generation_prompt
+    or build_supervised_example) will need to be updated.
     """
 
     idx: int
@@ -195,6 +203,15 @@ class RenderContext:
 
     prev_message: Message | None = None
     """The previous message in the conversation, if any."""
+
+    @property
+    def follows_tool(self) -> bool:
+        """Whether this message immediately follows a tool response.
+
+        Used by DeepSeek to skip the role token and </think> prefix after tool responses,
+        as the assistant's response flows directly after <|tool_output_end|>.
+        """
+        return self.prev_message is not None and self.prev_message["role"] == "tool"
 
 
 class ToolSpec(TypedDict):
@@ -1388,9 +1405,6 @@ class DeepSeekV3ThinkingRenderer(Renderer):
             "DeepSeekV3ThinkingRenderer only supports message with string content"
         )
 
-        # Check if this assistant message follows a tool response
-        follows_tool = ctx.prev_message is not None and ctx.prev_message["role"] == "tool"
-
         if message["role"] == "system":
             # HF template collects all system messages at the start without role tokens
             # We only support this for idx=0; later system messages need system_role_as_user=True
@@ -1414,7 +1428,7 @@ class DeepSeekV3ThinkingRenderer(Renderer):
         elif message["role"] == "assistant":
             output_content = message["content"]
 
-            if follows_tool:
+            if ctx.follows_tool:
                 # Post-tool assistant: no role token, content flows directly after tool output
                 header_tokens = []
                 output_str = output_content
@@ -1633,10 +1647,7 @@ class DeepSeekV3DisableThinkingRenderer(DeepSeekV3ThinkingRenderer):
         - Strip any <think>...</think> blocks from content
         - Prepend </think> to signal non-thinking mode
         """
-        # Check if this assistant message follows a tool response
-        follows_tool = ctx.prev_message is not None and ctx.prev_message["role"] == "tool"
-
-        if message["role"] == "assistant" and not follows_tool:
+        if message["role"] == "assistant" and not ctx.follows_tool:
             content = message.get("content", "")
             assert isinstance(content, str), (
                 "DeepSeekV3DisableThinkingRenderer only supports message with string content"

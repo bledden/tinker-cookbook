@@ -918,10 +918,9 @@ def test_deepseek_post_tool_formatting():
             is_last=idx == len(messages) - 1,
             prev_message=messages[idx - 1] if idx > 0 else None,
         )
-        follows_tool = ctx.prev_message is not None and ctx.prev_message["role"] == "tool"
         rendered = renderer.render_message(message, ctx)
 
-        if message["role"] == "assistant" and follows_tool:
+        if message["role"] == "assistant" and ctx.follows_tool:
             # Post-tool assistant should have no header (no role token)
             header = rendered.header
             assert header is None or len(header.tokens) == 0, (
